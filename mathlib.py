@@ -74,19 +74,12 @@ class Mathlib(object):
             matrixFinal.append(matrix1[i] - matrix2[i])
         return matrixFinal
     
-    def norm(self, x):
-        c = x[0] ** 2 + x[1] ** 2 + x[2] ** 2
-        c = c * 1.0
-
-        if c >= 0:
-            p = c
-            i = 0
-
-            while i != p:
-                i = p
-                p = (c / p + p) / 2
+    def linalgNorm(self, matrix):
+        if len(matrix) == 1:
+            matrix = self.VertHor(matrix)
         else:
-            print("Número negativo")
-        h = [int(x[0] / p), int(x[1] / p), int(x[2] / p)]
-        return c
+            matrixFinal = 0
+            for i in range(len(matrix)):
+                matrixFinal += matrix[i] ** 2
+            return matrixFinal ** 0.5
     

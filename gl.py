@@ -55,11 +55,19 @@ class Renderer(object):
         self.currColor = color(1, 1, 1)
         self.libreria = Mathlib()
         
+        self.active_shader = None
+        self.active_texture = None
+        
+        self.dirLight = V3(0,0,1)
+        
         self.glClear()
         self.glViewPort(0, 0, self.width, self.height)
         
     def glClear(self):
         self.pixels = [[self.clearColor for y in range(self.height)] for x in range(self.width)]
+        
+        self.zbuffer = [[ float('inf') for y in range(self.height)]
+                          for x in range(self.width)]
         
     def glClearColor(self, r, g, b):
         self.clearColor = color(r, g, b)
@@ -143,7 +151,7 @@ class Renderer(object):
 
         return matrixFinal
 
-    def glTransform(self, vertex, matrix,count):
+    def glTransform(self, vertex, matrix):
         translate = V3(960/2, 540/2, 0)
         scale = V3(50,50,50)
 
@@ -168,7 +176,7 @@ class Renderer(object):
     def glLoadModel(self, filename, translate = V3(0,0,0), rotate = V3(0,0,0), scale = V3(1,1,1)):
         model = Obj(filename)
         modelMatrix = self.glCreateObjectMatrix(translate, rotate, scale)
-        count = 0
+
         for face in model.faces:
             vertCount = len(face)
 
@@ -176,16 +184,28 @@ class Renderer(object):
             v1 = model.vertices[ face[1][0] - 1]
             v2 = model.vertices[ face[2][0] - 1]
 
-            v0 = self.glTransform(v0, modelMatrix, count)
-            count+=1
-            v1 = self.glTransform(v1, modelMatrix, count)
-            v2 = self.glTransform(v2, modelMatrix, count)
-            
+            v0 = self.glTransform(v0, modelMatrix)
+            v1 = self.glTransform(v1, modelMatrix)
+            v2 = self.glTransform(v2, modelMatrix)
+
+            vt0 = model.texcoords[face[0][1] - 1]
+            vt1 = model.texcoords[face[1][1] - 1]
+            vt2 = model.texcoords[face[2][1] - 1]
+
+            vn0 = model.normals[face[0][2] - 1]
+            vn1 = model.normals[face[1][2] - 1]
+            vn2 = model.normals[face[2][2] - 1]
+
+            self.glTriangle_bc(v0, v1, v2, texCoords = (vt0, vt1, vt2), normals = (vn0, vn1, vn2))
+
+            if vertCount == 4:
+                v3 = model.vertices[ face[3][0] - 1]
+                v3 = self.glTransform(v3, modelMatrix)
+                vt3 = model.texcoords[face[3][1] - 1]
+                vn3 = model.normals[face[3][2] - 1]
 
 
-            self.glTriangle_std(v0, v1, v2, color(random.random(),
-                                                  random.random(),
-                                                  random.random()))
+                self.glTriangle_bc(v0, v2, v3, texCoords = (vt0, vt2, vt3), normals = (vn0, vn2, vn3))
     
     def glTriangle_std(self, A, B, C, clr = None):
             
@@ -301,45 +321,76 @@ class Renderer(object):
                 
                 limit += 1
                 
-        def glTriangle_bc(self, A, B, C, texCoords = (), normals = (), clr = None):
-            # bounding box
-            minX = round(min(A.x, B.x, C.x))
-            minY = round(min(A.y, B.y, C.y))
-            maxX = round(max(A.x, B.x, C.x))
-            maxY = round(max(A.y, B.y, C.y))
+    def glTriangle_bc(self, A, B, C, texCoords = (), normals = (), clr = None):
+        # bounding box
+        minX = round(min(A.x, B.x, C.x))
+        minY = round(min(A.y, B.y, C.y))
+        maxX = round(max(A.x, B.x, C.x))
+        maxY = round(max(A.y, B.y, C.y))
 
-            triangleNormal = np.cross( np.subtract(B, A), np.subtract(C,A))
-            # normalizar
-            triangleNormal = triangleNormal / np.linalg.norm(triangleNormal)
-
-
-            for x in range(minX, maxX + 1):
-                for y in range(minY, maxY + 1):
-                    u, v, w = baryCoords(A, B, C, V2(x, y))
-
-                    if 0<=u and 0<=v and 0<=w:
-
-                        z = A.z * u + B.z * v + C.z * w
-
-                        if 0<=x<self.width and 0<=y<self.height:
-                            if z < self.zbuffer[x][y]:
-                                self.zbuffer[x][y] = z
-
-                                if self.active_shader:
-                                    r, g, b = self.active_shader(self,
-                                                                baryCoords=(u,v,w),
-                                                                vColor = clr or self.currColor,
-                                                                texCoords = texCoords,
-                                                                normals = normals,
-                                                                triangleNormal = triangleNormal)
+        triangleNormal = self.libreria.cross( self.libreria.substract(B, A), self.libreria.substract(C,A))
+        # normalizar
+        triangleNormal = triangleNormal / np.linalg.norm(triangleNormal)
 
 
+        for x in range(minX, maxX + 1):
+            for y in range(minY, maxY + 1):
+                u, v, w = baryCoords(A, B, C, V2(x, y))
 
-                                    self.glPoint(x, y, color(r,g,b))
-                                else:
-                                    self.glPoint(x,y, clr)
+                if 0<=u and 0<=v and 0<=w:
 
-    #Ayuda obtenida de https://en.wikipedia.org/wiki/Even%E2%80%93odd_rule#:~:text=If%20this%20number%20is%20odd,to%20fill%20in%20strange%20ways. Utililzando la even odd rule para saber si un punto es boundary o no
+                    z = A.z * u + B.z * v + C.z * w
+
+                    if 0<=x<self.width and 0<=y<self.height:
+                        if z < self.zbuffer[x][y]:
+                            self.zbuffer[x][y] = z
+
+                            if self.active_shader:
+                                r, g, b = self.active_shader(self,
+                                                            baryCoords=(u,v,w),
+                                                            vColor = clr or self.currColor,
+                                                            texCoords = texCoords,
+                                                            normals = normals,
+                                                            triangleNormal = triangleNormal)
+
+
+
+                                self.glPoint(x, y, color(r,g,b))
+                            else:
+                                self.glPoint(x,y, clr)
+                                
+    def glFinish(self, filename):
+        with open(filename, "wb") as file:
+        #header
+            file.write(bytes('B'.encode('ascii')))
+            file.write(bytes('M'.encode('ascii')))
+            file.write(dword(14 + 40 + self.width * self.height * 3))
+            file.write(dword(0))
+            file.write(dword(14 + 40))
+            
+            
+            #info header
+            file.write(dword(40))
+            file.write(dword(self.width))
+            file.write(dword(self.height))
+            file.write(word(1))
+            file.write(word(24))
+            file.write(dword(0))
+            file.write(dword(self.width * self.height * 3))
+            file.write(dword(0))
+            file.write(dword(0))
+            file.write(dword(0))
+            file.write(dword(0))
+            
+            
+            #Color Tables
+            for y in range(self.height):
+                for x in range(self.width):
+                    file.write(self.pixels[x][y])
+                    
+            
+
+'''     #Ayuda obtenida de https://en.wikipedia.org/wiki/Even%E2%80%93odd_rule#:~:text=If%20this%20number%20is%20odd,to%20fill%20in%20strange%20ways. Utililzando la even odd rule para saber si un punto es boundary o no
     def boundaries(self, x: int, y: int, poly) -> bool:
         num = len(poly)
         j = num - 1
@@ -373,37 +424,8 @@ class Renderer(object):
                 if self.boundaries(i,j,poly):
                     coolor = color(random.random(),random.random(),random.random())
                     self.glPoint(i,j, clr = coolor)
-                
+                 '''
         
         
         
-    def glFinish(self, filename):
-        with open(filename, "wb") as file:
-            #header
-            file.write(bytes('B'.encode('ascii')))
-            file.write(bytes('M'.encode('ascii')))
-            file.write(dword(14 + 40 + self.width * self.height * 3))
-            file.write(dword(0))
-            file.write(dword(14 + 40))
-            
-            
-            #info header
-            file.write(dword(40))
-            file.write(dword(self.width))
-            file.write(dword(self.height))
-            file.write(word(1))
-            file.write(word(24))
-            file.write(dword(0))
-            file.write(dword(self.width * self.height * 3))
-            file.write(dword(0))
-            file.write(dword(0))
-            file.write(dword(0))
-            file.write(dword(0))
-            
-            
-            #Color Tables
-            for y in range(self.height):
-                for x in range(self.width):
-                    file.write(self.pixels[x][y])
-                    
-            
+    
